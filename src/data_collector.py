@@ -1,267 +1,251 @@
-# src/data_collector.py - Module to collect market, sentiment, and macro data
+# src/data_collector.py
+# Improved version with better data cleaning and validation
 
+import os
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import requests
 from datetime import datetime, timedelta
-import os
-from config import (
-    STOCKS, DATA_PERIOD, RAW_DATA_DIR, NEWS_API_KEY,
-    SENTIMENT_DATA_DIR, SENTIMENT_LOOKBACK_DAYS, VERBOSE
-)
+from config import START_DATE, END_DATE, RAW_DATA_DIR, TICKERS, MARKET_INDICES, SECTOR_ETFS
 
-class MarketDataCollector:
-    """Collect OHLCV data from Yahoo Finance"""
-    
-    def __init__(self, output_dir=RAW_DATA_DIR, verbose=VERBOSE):
-        self.output_dir = output_dir
-        self.verbose = verbose
-        os.makedirs(output_dir, exist_ok=True)
-    
-    def fetch_single_stock(self, ticker, period=DATA_PERIOD):
-        """Fetch OHLCV data for a single stock"""
+
+class ImprovedMarketDataCollector:
+    def __init__(self):
+        self.start_date = START_DATE
+        self.end_date = END_DATE
+        os.makedirs(RAW_DATA_DIR, exist_ok=True)
+
+    def fetch_stock_data(self, ticker, save=True):
+        """
+        Fetch stock data with improved cleaning and validation
+        """
+        print(f"\n{'='*70}")
+        print(f"FETCHING: {ticker}")
+        print(f"{'='*70}")
+        print(f"Date range: {self.start_date} to {self.end_date}")
+
         try:
-            df = yf.download(ticker, period=period, progress=False)
-            df = df.reset_index()
+            # Download data
+            df = yf.download(
+                ticker,
+                start=self.start_date,
+                end=self.end_date,
+                progress=False,
+                auto_adjust=True
+            )
+
+            if df.empty:
+                print(f"❌ No data returned for {ticker}")
+                return None
+
+            # Reset index to get Date as column
+            df.reset_index(inplace=True)
+            
+            # 🔥 CRITICAL: Clean column names (handle multi-level columns)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            
+            # Ensure we have the required columns
+            required_cols = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
+            missing_cols = [col for col in required_cols if col not in df.columns]
+            
+            if missing_cols:
+                print(f"❌ Missing columns: {missing_cols}")
+                return None
+
+            # 🔥 DATA CLEANING
+            # 1. Remove any rows where Close is NaN or 0
+            df = df[df['Close'].notna()]
+            df = df[df['Close'] > 0]
+            
+            # 2. Remove any rows with all zeros
+            numeric_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+            df = df[~(df[numeric_cols] == 0).all(axis=1)]
+            
+            # 3. Forward fill any remaining NaN values
+            df[numeric_cols] = df[numeric_cols].fillna(method='ffill')
+            
+            # 4. Remove duplicates by date
+            df = df.drop_duplicates(subset=['Date'], keep='last')
+            
+            # 5. Sort by date
+            df = df.sort_values('Date').reset_index(drop=True)
+            
+            # 6. Validate OHLC relationships
+            # High should be >= Low, Close, Open
+            # Low should be <= High, Close, Open
+            df = df[
+                (df['High'] >= df['Low']) &
+                (df['High'] >= df['Close']) &
+                (df['High'] >= df['Open']) &
+                (df['Low'] <= df['Close']) &
+                (df['Low'] <= df['Open'])
+            ]
+            
+            # 7. Remove extreme outliers (price changes > 50% in a day are suspicious)
+            df['pct_change'] = df['Close'].pct_change()
+            df = df[df['pct_change'].abs() < 0.5]
+            df = df.drop(columns=['pct_change'])
+            
+            # Add ticker column
             df['Ticker'] = ticker
             
-            if self.verbose:
-                print(f"✓ Fetched {ticker}: {len(df)} records")
+            # Reorder columns
+            df = df[['Date', 'Ticker', 'Open', 'High', 'Low', 'Close', 'Volume']]
             
+            print(f"✅ Rows downloaded: {len(df)}")
+            print(f"   Date range: {df['Date'].min().date()} → {df['Date'].max().date()}")
+            print(f"   Latest Close: ${df['Close'].iloc[-1]:.2f}")
+            print(f"   Avg Volume: {df['Volume'].mean():,.0f}")
+
+            if save:
+                path = os.path.join(RAW_DATA_DIR, f"{ticker}_ohlcv.csv")
+                df.to_csv(path, index=False)
+                print(f"💾 Saved to {path}")
+
             return df
-        
+
         except Exception as e:
-            print(f"✗ Error fetching {ticker}: {str(e)}")
+            print(f"❌ Error fetching {ticker}: {e}")
             return None
-    
-    def fetch_multiple_stocks(self, stocks=STOCKS):
-        """Fetch OHLCV data for multiple stocks"""
+
+    def fetch_multiple_stocks(self, tickers):
+        """
+        Fetch data for multiple stocks
+        """
+        print(f"\n{'='*70}")
+        print(f"FETCHING DATA FOR {len(tickers)} STOCKS")
+        print(f"{'='*70}")
+        print("Tickers:", ", ".join(tickers))
+
         all_data = {}
-        
-        for ticker in stocks:
-            df = self.fetch_single_stock(ticker)
-            if df is not None:
+        successful = 0
+        failed = []
+
+        for i, ticker in enumerate(tickers, 1):
+            print(f"\n[{i}/{len(tickers)}] Processing {ticker}...")
+            df = self.fetch_stock_data(ticker)
+
+            if df is not None and len(df) > 0:
                 all_data[ticker] = df
-                
-                # Save individual file
-                filepath = os.path.join(self.output_dir, f'{ticker}_ohlcv.csv')
-                df.to_csv(filepath, index=False)
-                
-                if self.verbose:
-                    print(f"  → Saved to {filepath}")
-        
-        if self.verbose:
-            print(f"\n✓ Collected {len(all_data)}/{len(stocks)} stocks\n")
-        
-        return all_data
-    
-    def load_stock_data(self, ticker):
-        """Load previously downloaded stock data from CSV"""
-        filepath = os.path.join(self.output_dir, f'{ticker}_ohlcv.csv')
-        
-        if os.path.exists(filepath):
-            df = pd.read_csv(filepath)
-            df['Date'] = pd.to_datetime(df['Date'])
-            return df
-        else:
-            print(f"✗ File not found: {filepath}")
-            return None
-
-class SentimentDataCollector:
-    """Collect news sentiment data from NewsAPI"""
-    
-    def __init__(self, api_key=NEWS_API_KEY, output_dir=SENTIMENT_DATA_DIR, verbose=VERBOSE):
-        self.api_key = api_key
-        self.output_dir = output_dir
-        self.verbose = verbose
-        os.makedirs(output_dir, exist_ok=True)
-        
-        if api_key == "your_news_api_key_here":
-            print("⚠️  WARNING: Please set your NewsAPI key in config.py")
-    
-    def fetch_news_articles(self, ticker, days=SENTIMENT_LOOKBACK_DAYS):
-        """Fetch news articles for a ticker from NewsAPI"""
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=days)
-        
-        url = "https://newsapi.org/v2/everything"
-        params = {
-            'q': ticker,
-            'from': start_date.strftime('%Y-%m-%d'),
-            'to': end_date.strftime('%Y-%m-%d'),
-            'sortBy': 'publishedAt',
-            'language': 'en',
-            'apiKey': self.api_key,
-            'pageSize': 100
-        }
-        
-        try:
-            response = requests.get(url, params=params, timeout=10)
-            data = response.json()
-            
-            if 'articles' in data:
-                articles = data['articles']
-                if self.verbose:
-                    print(f"✓ Fetched {len(articles)} articles for {ticker}")
-                return articles
+                successful += 1
             else:
-                print(f"✗ Error fetching news for {ticker}: {data.get('message', 'Unknown error')}")
-                return []
-        
-        except Exception as e:
-            print(f"✗ Error: {str(e)}")
-            return []
-    
-    def articles_to_dataframe(self, articles):
-        """Convert articles list to DataFrame"""
-        if not articles:
-            return pd.DataFrame()
-        
-        df = pd.DataFrame([
-            {
-                'title': article.get('title', ''),
-                'description': article.get('description', ''),
-                'content': article.get('content', ''),
-                'publishedAt': article.get('publishedAt', ''),
-                'source': article.get('source', {}).get('name', ''),
-                'url': article.get('url', '')
-            }
-            for article in articles
-        ])
-        
-        df['publishedAt'] = pd.to_datetime(df['publishedAt'])
-        df['date'] = df['publishedAt'].dt.date
-        
-        return df
+                failed.append(ticker)
+                print(f"⚠️  Skipped {ticker}")
 
-class MacroDataCollector:
-    """Collect macroeconomic indicators"""
-    
-    def __init__(self, verbose=VERBOSE):
-        self.verbose = verbose
-    
-    def fetch_vix(self, period='5y'):
-        """Fetch VIX (Volatility Index)"""
-        try:
-            vix = yf.download('^VIX', period=period, progress=False)
-            vix = vix.reset_index()
-            vix.rename(columns={'Close': 'VIX'}, inplace=True)
-            
-            if self.verbose:
-                print(f"✓ Fetched VIX: {len(vix)} records")
-            
-            return vix[['Date', 'VIX']]
-        
-        except Exception as e:
-            print(f"✗ Error fetching VIX: {str(e)}")
-            return None
-    
-    def fetch_sp500(self, period='5y'):
-        """Fetch S&P 500 data for market correlation"""
-        try:
-            sp500 = yf.download('^GSPC', period=period, progress=False)
-            sp500 = sp500.reset_index()
-            sp500.rename(columns={'Close': 'SP500_Close'}, inplace=True)
-            sp500['SP500_Return'] = sp500['SP500_Close'].pct_change()
-            
-            if self.verbose:
-                print(f"✓ Fetched S&P 500: {len(sp500)} records")
-            
-            return sp500[['Date', 'SP500_Close', 'SP500_Return']]
-        
-        except Exception as e:
-            print(f"✗ Error fetching S&P 500: {str(e)}")
-            return None
-    
-    def fetch_interest_rate(self, period='5y'):
-        """Fetch 10-Year Treasury Rate"""
-        try:
-            tnx = yf.download('^TNX', period=period, progress=False)
-            tnx = tnx.reset_index()
-            tnx.rename(columns={'Close': 'Interest_Rate'}, inplace=True)
-            
-            if self.verbose:
-                print(f"✓ Fetched 10Y Treasury: {len(tnx)} records")
-            
-            return tnx[['Date', 'Interest_Rate']]
-        
-        except Exception as e:
-            print(f"✗ Error fetching interest rate: {str(e)}")
-            return None
-    
-    def fetch_all_macro_data(self, period='5y'):
-        """Fetch all macroeconomic indicators"""
-        vix = self.fetch_vix(period)
-        sp500 = self.fetch_sp500(period)
-        interest_rate = self.fetch_interest_rate(period)
-        
-        # Merge all data
-        macro_data = vix.copy()
-        
-        if sp500 is not None:
-            macro_data = macro_data.merge(sp500, on='Date', how='left')
-        
-        if interest_rate is not None:
-            macro_data = macro_data.merge(interest_rate, on='Date', how='left')
-        
-        # Forward fill missing values
-        macro_data = macro_data.fillna(method='ffill')
-        
-        if self.verbose:
-            print(f"\n✓ Combined macro data: {len(macro_data)} records")
-        
-        return macro_data
+        print(f"\n{'='*70}")
+        print(f"SUMMARY")
+        print(f"{'='*70}")
+        print(f"✅ Successful: {successful}/{len(tickers)}")
+        if failed:
+            print(f"❌ Failed: {', '.join(failed)}")
+        print(f"{'='*70}")
 
-class DataOrchestrator:
-    """Orchestrate data collection from all sources"""
+        return all_data
+
+    def fetch_market_data(self):
+        """
+        Fetch market indices and sector ETFs
+        """
+        print(f"\n{'='*70}")
+        print("FETCHING MARKET INDICATORS")
+        print(f"{'='*70}")
+        
+        market_data = {}
+        
+        # Fetch market indices
+        print("\n📊 Market Indices:")
+        for index in MARKET_INDICES:
+            print(f"  Fetching {index}...")
+            df = self.fetch_stock_data(index, save=True)
+            if df is not None:
+                market_data[index] = df
+                print(f"  ✅ {index}: {len(df)} rows")
+        
+        # Fetch sector ETFs
+        print("\n📈 Sector ETFs:")
+        for etf in SECTOR_ETFS:
+            print(f"  Fetching {etf}...")
+            df = self.fetch_stock_data(etf, save=True)
+            if df is not None:
+                market_data[etf] = df
+                print(f"  ✅ {etf}: {len(df)} rows")
+        
+        print(f"\n✅ Market data collection complete!")
+        return market_data
+
+    def update_existing_data(self, ticker):
+        """
+        Update existing data with new records only
+        """
+        path = os.path.join(RAW_DATA_DIR, f"{ticker}_ohlcv.csv")
+        
+        if not os.path.exists(path):
+            print(f"No existing data for {ticker}, fetching all...")
+            return self.fetch_stock_data(ticker)
+        
+        # Load existing data
+        existing_df = pd.read_csv(path, parse_dates=['Date'])
+        last_date = existing_df['Date'].max()
+        
+        print(f"Updating {ticker} from {last_date.date()}...")
+        
+        # Fetch new data
+        new_start = (last_date + timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        try:
+            new_df = yf.download(
+                ticker,
+                start=new_start,
+                end=self.end_date,
+                progress=False,
+                auto_adjust=True
+            )
+            
+            if new_df.empty:
+                print(f"✅ {ticker} is up to date")
+                return existing_df
+            
+            new_df.reset_index(inplace=True)
+            if isinstance(new_df.columns, pd.MultiIndex):
+                new_df.columns = new_df.columns.get_level_values(0)
+            
+            new_df['Ticker'] = ticker
+            new_df = new_df[['Date', 'Ticker', 'Open', 'High', 'Low', 'Close', 'Volume']]
+            
+            # Combine and deduplicate
+            combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+            combined_df = combined_df.drop_duplicates(subset=['Date'], keep='last')
+            combined_df = combined_df.sort_values('Date').reset_index(drop=True)
+            
+            # Save updated data
+            combined_df.to_csv(path, index=False)
+            
+            print(f"✅ Added {len(new_df)} new rows to {ticker}")
+            return combined_df
+            
+        except Exception as e:
+            print(f"❌ Error updating {ticker}: {e}")
+            return existing_df
+
+
+# Convenience function
+def fetch_all_data():
+    """
+    Fetch all stocks, indices, and sector ETFs
+    """
+    collector = ImprovedMarketDataCollector()
     
-    def __init__(self, verbose=VERBOSE):
-        self.verbose = verbose
-        self.market_collector = MarketDataCollector(verbose=verbose)
-        self.sentiment_collector = SentimentDataCollector(verbose=verbose)
-        self.macro_collector = MacroDataCollector(verbose=verbose)
+    # Fetch stocks
+    stock_data = collector.fetch_multiple_stocks(TICKERS)
     
-    def collect_all_data(self, stocks=STOCKS, period=DATA_PERIOD):
-        """Collect market, sentiment, and macro data"""
-        if self.verbose:
-            print("=" * 70)
-            print("STARTING DATA COLLECTION")
-            print("=" * 70 + "\n")
-        
-        # Collect market data
-        print("📊 Collecting Market Data (OHLCV)...")
-        market_data = self.market_collector.fetch_multiple_stocks(stocks)
-        
-        # Collect macro data
-        print("\n🌍 Collecting Macro Data...")
-        macro_data = self.macro_collector.fetch_all_macro_data(period)
-        
-        # Collect sentiment data
-        print("\n📰 Collecting Sentiment Data...")
-        sentiment_data = {}
-        for ticker in stocks:
-            articles = self.sentiment_collector.fetch_news_articles(ticker)
-            if articles:
-                df = self.sentiment_collector.articles_to_dataframe(articles)
-                sentiment_data[ticker] = df
-                
-                # Save to CSV
-                filepath = os.path.join(SENTIMENT_DATA_DIR, f'{ticker}_sentiment_raw.csv')
-                df.to_csv(filepath, index=False)
-        
-        if self.verbose:
-            print("\n" + "=" * 70)
-            print("DATA COLLECTION COMPLETE")
-            print("=" * 70 + "\n")
-        
-        return {
-            'market': market_data,
-            'macro': macro_data,
-            'sentiment': sentiment_data
-        }
+    # Fetch market data
+    market_data = collector.fetch_market_data()
+    
+    return {**stock_data, **market_data}
+
 
 if __name__ == "__main__":
-    orchestrator = DataOrchestrator(verbose=True)
-    data = orchestrator.collect_all_data(stocks=['AAPL', 'MSFT', 'GOOGL'], period='5y')
-    print("\n✓ Data collection complete!")
+    print("Starting data collection...")
+    data = fetch_all_data()
+    print(f"\n✅ Total datasets collected: {len(data)}")

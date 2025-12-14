@@ -1,144 +1,229 @@
-# config.py - Configuration file for Stock Price Prediction Project
+# config.py
+# Improved configuration for 65-70% accuracy target
 
 import os
-from datetime import datetime, timedelta
 
-# ============================================================================
-# PROJECT PATHS
-# ============================================================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, 'data')
-RAW_DATA_DIR = os.path.join(DATA_DIR, 'raw')
-PROCESSED_DATA_DIR = os.path.join(DATA_DIR, 'processed')
-SENTIMENT_DATA_DIR = os.path.join(DATA_DIR, 'sentiment')
-MODELS_DIR = os.path.join(BASE_DIR, 'models')
-RESULTS_DIR = os.path.join(BASE_DIR, 'results')
-NOTEBOOKS_DIR = os.path.join(BASE_DIR, 'notebooks')
+# ==================================================
+# Data Collection - MORE DATA = BETTER ACCURACY
+# ==================================================
+START_DATE = "2000-01-01"  # 🔥 Extended to 25 years (was 2021)
+END_DATE = "2025-12-13"
 
-# Create directories if they don't exist
-for directory in [RAW_DATA_DIR, PROCESSED_DATA_DIR, SENTIMENT_DATA_DIR, MODELS_DIR, RESULTS_DIR]:
-    os.makedirs(directory, exist_ok=True)
-
-# ============================================================================
-# STOCK SELECTION
-# ============================================================================
-STOCKS = [
-    'AAPL', 'MSFT', 'GOOGL', 'TSLA', 'META', 
-    'AMZN', 'NVDA', 'AMD', 'NFLX', 'PYPL',
-    'SQ', 'SHOP', 'ZM', 'CRM', 'ADBE',
-    'INTC', 'CSCO', 'IBM', 'QCOM', 'INFY'
+# Core tech stocks with good liquidity
+TICKERS = [
+    "AAPL", "MSFT", "GOOGL", "AMZN", "META",
+    "NVDA", "TSLA", "AMD", "NFLX", "INTC",
+    "CSCO", "ORCL", "CRM", "ADBE", "QCOM"
 ]
-NUM_STOCKS = len(STOCKS)
-DATA_PERIOD = '20y'
-LOOKBACK_PERIOD = 30
 
-# ============================================================================
-# API KEYS
-# ============================================================================
-NEWS_API_KEY = "678943330039489abe70431b0a1baf07"
-FRED_API_KEY = "87d68a974d7adac4da5fc76e39b4136b" 
+# Market indicators
+MARKET_INDICES = ["^GSPC", "^IXIC", "^DJI", "^VIX"]
 
-# ============================================================================
-# DATA PROCESSING
-# ============================================================================
-TRAIN_SIZE = 0.70
-VAL_SIZE = 0.15
-TEST_SIZE = 0.15
-NORMALIZE_METHOD = 'minmax'
-REMOVE_OUTLIERS = True
-OUTLIER_THRESHOLD = 0.3
+# Sector ETFs for correlation
+SECTOR_ETFS = ["XLK", "XLF", "XLE", "XLV", "XLI"]
 
-# ============================================================================
-# FEATURE ENGINEERING
-# ============================================================================
+# ==================================================
+# Paths
+# ==================================================
+DATA_DIR = "data"
+RAW_DATA_DIR = "data/raw"
+PROCESSED_DATA_DIR = "data/processed"
+MODEL_DIR = "models"
+RESULTS_DIR = "results"
+CACHE_DIR = "cache"
+
+# Create directories
+for d in [DATA_DIR, RAW_DATA_DIR, PROCESSED_DATA_DIR, MODEL_DIR, RESULTS_DIR, CACHE_DIR]:
+    os.makedirs(d, exist_ok=True)
+
+# ==================================================
+# Randomness
+# ==================================================
+RANDOM_SEED = 42
+
+# ==================================================
+# Dataset Parameters
+# ==================================================
+SEQUENCE_LENGTH = 60  # 🔥 Increased from 30 (more context)
+TRAIN_SPLIT = 0.70
+VAL_SPLIT = 0.15
+TEST_SPLIT = 0.15
+
+# Prediction horizons
+HORIZON_1D = 1   # Next day
+HORIZON_5D = 5   # Next week
+HORIZON_20D = 20 # Next month
+
+# ==================================================
+# Feature Engineering - ADVANCED
+# ==================================================
+USE_TECHNICAL_INDICATORS = True
+USE_SENTIMENT_ANALYSIS = False  # Set to True if you have API keys
+USE_VOLUME_PROFILE = True
+USE_MARKET_REGIME = True
+USE_SECTOR_CORRELATION = True
+
+# Technical Indicators
 RSI_PERIOD = 14
+STOCH_PERIOD = 14  # Stochastic Oscillator
+CCI_PERIOD = 20    # Commodity Channel Index
+
 MACD_FAST = 12
 MACD_SLOW = 26
 MACD_SIGNAL = 9
+
+SMA_PERIODS = [5, 10, 20, 50, 100, 200]
+EMA_PERIODS = [9, 12, 21, 26, 50]
+
 BB_PERIOD = 20
 BB_STD_DEV = 2
-SMA_PERIODS = [20, 50, 200]
-EMA_PERIODS = [12, 26]
-VOLATILITY_PERIOD = 14
-LAG_DAYS = [1, 2, 3, 5, 7]
-CORRELATION_WINDOW = 30
-CORRELATION_MARKET_INDEX = '^GSPC'
-SENTIMENT_LOOKBACK_DAYS = 365
 
-# ============================================================================
-# MODEL HYPERPARAMETERS
-# ============================================================================
-LSTM_UNITS_1 = 64
-LSTM_UNITS_2 = 32
-LSTM_DROPOUT = 0.2
-LSTM_ACTIVATION = 'relu'
-DENSE_UNITS = 16
-DENSE_ACTIVATION = 'relu'
-BATCH_SIZE = 32
-EPOCHS = 50
-LEARNING_RATE = 0.001
-EARLY_STOPPING_PATIENCE = 10
-VALIDATION_SPLIT = 0.2
-SEQUENCE_LENGTH = 30
+ATR_PERIOD = 14
+ADX_PERIOD = 14
 
-# ============================================================================
-# XGBOOST PARAMETERS
-# ============================================================================
+VOLATILITY_WINDOW = 20
+VOLUME_SMA_PERIOD = 20
+
+# Lag features for temporal patterns
+LAG_PERIODS = [1, 2, 3, 5, 10, 20]
+
+# Rolling windows for momentum
+MOMENTUM_WINDOWS = [5, 10, 20, 60]
+
+# ==================================================
+# Model Architecture - ENSEMBLE
+# ==================================================
+USE_ENSEMBLE = True  # 🔥 Combine multiple models
+
+# LSTM Configuration
+LSTM_UNITS_1 = 128  # 🔥 Increased from 64
+LSTM_UNITS_2 = 64   # 🔥 Increased from 32
+LSTM_UNITS_3 = 32   # 🔥 Added third layer
+
+LSTM_ACTIVATION = "tanh"
+LSTM_DROPOUT = 0.3  # 🔥 Increased from 0.2
+LSTM_RECURRENT_DROPOUT = 0.2  # 🔥 Added
+
+DENSE_UNITS = 64  # 🔥 Increased from 32
+DENSE_ACTIVATION = "relu"
+DENSE_DROPOUT = 0.3
+
+# XGBoost Configuration
 XGBOOST_PARAMS = {
-    'n_estimators': 100,
-    'max_depth': 5,
-    'learning_rate': 0.1,
-    'subsample': 0.8,
-    'colsample_bytree': 0.8,
-    'objective': 'reg:squarederror',
-    'random_state': 42,
+    "n_estimators": 500,  # 🔥 Increased from 300
+    "max_depth": 7,       # 🔥 Increased from 5
+    "learning_rate": 0.03,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 3,
+    "gamma": 0.1,
+    "reg_alpha": 0.1,
+    "reg_lambda": 1.0,
+    "objective": "binary:logistic",
+    "eval_metric": "logloss",
+    "random_state": RANDOM_SEED,
+    "n_jobs": -1
 }
 
-# ============================================================================
-# TRADING PARAMETERS
-# ============================================================================
-CONFIDENCE_THRESHOLD = 0.65
-RISK_REWARD_RATIO = 1.5
-VOLATILITY_MULTIPLIER = 2.0
-INITIAL_CAPITAL = 10000
-POSITION_SIZE_PERCENT = 0.1
-MAX_POSITION_SIZE = 0.3
+# LightGBM Configuration
+LIGHTGBM_PARAMS = {
+    "n_estimators": 500,
+    "max_depth": 8,
+    "learning_rate": 0.03,
+    "num_leaves": 31,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_samples": 20,
+    "reg_alpha": 0.1,
+    "reg_lambda": 1.0,
+    "objective": "binary",
+    "metric": "binary_logloss",
+    "random_state": RANDOM_SEED,
+    "n_jobs": -1,
+    "verbose": -1
+}
 
-# ============================================================================
-# SENTIMENT ANALYSIS
-# ============================================================================
-SENTIMENT_MODEL = 'finbert'
-SENTIMENT_THRESHOLD_POSITIVE = 0.5
-SENTIMENT_THRESHOLD_NEGATIVE = -0.5
+# Ensemble weights (will be optimized during training)
+ENSEMBLE_WEIGHTS = {
+    "lstm": 0.4,
+    "xgboost": 0.3,
+    "lightgbm": 0.3
+}
 
-# ============================================================================
-# RANDOM STATE & LOGGING
-# ============================================================================
-RANDOM_SEED = 42
-VERBOSE = True
-LOG_LEVEL = 'INFO'
+# ==================================================
+# Training Parameters
+# ==================================================
+LEARNING_RATE = 0.001
+BATCH_SIZE = 64  # 🔥 Increased from 32
+EPOCHS = 100     # 🔥 Increased from 50
 
-# ============================================================================
-# PLOTTING
-# ============================================================================
-PLOT_DPI = 100
-PLOT_STYLE = 'seaborn-v0_8-darkgrid'
-PLOT_FIGURE_SIZE = (15, 6)
+# Callbacks
+EARLY_STOPPING_PATIENCE = 15  # 🔥 Increased from 10
+REDUCE_LR_PATIENCE = 7        # 🔥 Increased from 5
+REDUCE_LR_FACTOR = 0.5
+MIN_LR = 1e-7
 
-def print_config():
-    """Print current configuration"""
-    print("=" * 70)
-    print("PROJECT CONFIGURATION")
-    print("=" * 70)
-    print(f"\n📊 STOCKS: {', '.join(STOCKS)}")
-    print(f"📅 DATA PERIOD: {DATA_PERIOD}")
-    print(f"📁 DATA DIR: {DATA_DIR}")
-    print(f"\n🔢 TRAIN/VAL/TEST SPLIT: {TRAIN_SIZE}/{VAL_SIZE}/{TEST_SIZE}")
-    print(f"🧠 LSTM: {LSTM_UNITS_1} → {LSTM_UNITS_2} units")
-    print(f"⏳ SEQUENCE LENGTH: {SEQUENCE_LENGTH} days")
-    print(f"💰 INITIAL CAPITAL: ${INITIAL_CAPITAL}")
-    print(f"✅ CONFIDENCE THRESHOLD: {CONFIDENCE_THRESHOLD}")
-    print("=" * 70 + "\n")
+# ==================================================
+# Validation Strategy - WALK FORWARD
+# ==================================================
+USE_WALK_FORWARD = True
+WALK_FORWARD_SPLITS = 5  # Number of time-based CV splits
 
-if __name__ == "__main__":
-    print_config()
+# ==================================================
+# Feature Selection
+# ==================================================
+USE_FEATURE_SELECTION = True
+FEATURE_IMPORTANCE_THRESHOLD = 0.01  # Drop features below this importance
+
+# ==================================================
+# Normalization
+# ==================================================
+NORMALIZE_METHOD = "standard"  # 🔥 Changed from minmax (better for returns)
+
+# ==================================================
+# Trading Strategy Parameters
+# ==================================================
+CONFIDENCE_THRESHOLD = 0.60  # 🔥 Lowered from 0.65 (more trades)
+STOP_LOSS = 0.03             # -3% stop loss
+TAKE_PROFIT = 0.05           # +5% take profit
+MAX_POSITION_SIZE = 0.2      # 20% of portfolio per trade
+
+# ==================================================
+# Backtesting
+# ==================================================
+BACKTEST_INITIAL_CAPITAL = 100000  # $100K
+BACKTEST_COMMISSION = 0.001        # 0.1% per trade
+BACKTEST_SLIPPAGE = 0.0005         # 0.05% slippage
+
+# ==================================================
+# Performance Targets
+# ==================================================
+TARGET_ACCURACY = 0.65  # 65% direction accuracy
+TARGET_SHARPE_RATIO = 1.5
+TARGET_MAX_DRAWDOWN = 0.20  # 20%
+
+# ==================================================
+# Logging
+# ==================================================
+VERBOSE = 1
+LOG_FILE = "training.log"
+SAVE_PLOTS = True
+PLOT_DIR = "plots"
+os.makedirs(PLOT_DIR, exist_ok=True)
+
+
+STOCH_PERIOD = 14
+CCI_PERIOD = 20
+ADX_PERIOD = 14
+MOMENTUM_WINDOWS = [5, 10, 20, 60]
+HORIZON_1D = 1
+HORIZON_5D = 5
+HORIZON_20D = 20
+# Missing parameters
+STOCH_PERIOD = 14
+CCI_PERIOD = 20
+ADX_PERIOD = 14
+MOMENTUM_WINDOWS = [5, 10, 20, 60]
+HORIZON_1D = 1
+HORIZON_5D = 5
+HORIZON_20D = 20
