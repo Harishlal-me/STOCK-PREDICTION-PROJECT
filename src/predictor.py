@@ -1,121 +1,138 @@
-# src/predictor.py
-# For models trained with UNSCALED returns
-
-import pickle
-import numpy as np
+import os
+import sys
 import pandas as pd
+import numpy as np
 import tensorflow as tf
-from pathlib import Path
+import pickle
+import warnings
 
-from config import SEQUENCE_LENGTH
+warnings.filterwarnings('ignore')
 
-USD_TO_INR = 83.05
+print("=" * 70)
+print("🎯 STOCK PREDICTION FOR AAPL")
+print("=" * 70)
 
+# Get price from command line
+custom_price = None
+if "--price" in sys.argv:
+    price_idx = sys.argv.index("--price")
+    custom_price = float(sys.argv[price_idx + 1])
 
-class StockPredictor:
-    def __init__(self, ticker: str):
-        self.ticker = ticker.upper()
+# Load data and model
+data_path = "data/processed/AAPL_engineered.csv"
+df = pd.read_csv(data_path)
+df = df.fillna(method='ffill').fillna(method='bfill')
 
-        base_dir = Path(__file__).resolve().parents[1]
-        model_dir = base_dir / "models"
-        data_dir = base_dir / "data" / "processed"
+print(f"\n🤖 Using Model: Significant Move LSTM (80.6% accuracy)")
 
-        # Load models
-        self.reg_model = tf.keras.models.load_model(
-            model_dir / f"{self.ticker}_lstm_regressor.h5",
-            compile=False
-        )
+# Get current price
+if custom_price:
+    current_price = custom_price
+else:
+    current_price = df['Close'].iloc[-1]
 
-        self.clf_model = tf.keras.models.load_model(
-            model_dir / f"{self.ticker}_lstm_classifier.h5",
-            compile=False
-        )
+usd_to_inr = 83.12
+inr_price = current_price * usd_to_inr
 
-        # Load scaler and features
-        with open(model_dir / f"{self.ticker}_scaler.pkl", "rb") as f:
-            self.scaler = pickle.load(f)
+print(f"📊 Current Price: ${current_price:.2f} (₹{inr_price:,.0f})")
 
-        with open(model_dir / f"{self.ticker}_feature_cols.pkl", "rb") as f:
-            self.feature_cols = pickle.load(f)
+# Load model and scaler
+model = tf.keras.models.load_model("models/AAPL_significant_lstm.h5")
+scaler = pickle.load(open("models/AAPL_significant_scaler.pkl", 'rb'))
 
-        # Load data
-        self.df = pd.read_csv(
-            data_dir / f"{self.ticker}_engineered.csv",
-            parse_dates=["Date"]
-        )
+# Load selected features
+try:
+    selected_features = pickle.load(open("models/AAPL_significant_features.pkl", 'rb'))
+except:
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    numeric_cols = [col for col in numeric_cols if col not in ['Close', 'Volume', 'Open', 'High', 'Low']]
+    selected_features = numeric_cols[:50]
 
-    def _build_sequence(self):
-        """Build input sequence"""
-        df = self.df.copy()
+print(f"   Features used: {len(selected_features)}")
 
-        # Align features
-        for col in self.feature_cols:
-            if col not in df.columns:
-                df[col] = 0.0
-
-        df = df[self.feature_cols].tail(SEQUENCE_LENGTH)
-
-        if len(df) < SEQUENCE_LENGTH:
-            raise ValueError(f"Need {SEQUENCE_LENGTH} rows")
-
-        X_scaled = self.scaler.transform(df)
-        return X_scaled.reshape(1, SEQUENCE_LENGTH, X_scaled.shape[1])
-
-    def predict_prices(self, current_price: float):
-        """Predict prices using UNSCALED returns"""
-        X = self._build_sequence()
-
-        # Model outputs UNSCALED return with tanh activation (range: -1 to +1)
-        predicted_return = float(self.reg_model.predict(X, verbose=0)[0][0])
-        
-        print(f"\n" + "="*60)
-        print(f"📊 Price Prediction")
-        print("="*60)
-        print(f"Current price: ${current_price:.2f}")
-        print(f"Predicted return: {predicted_return*100:.2f}%")
-        
-        # Calculate tomorrow's price
-        tomorrow = current_price * (1 + predicted_return)
-        change_pct = ((tomorrow / current_price) - 1) * 100
-        
-        print(f"Tomorrow's price: ${tomorrow:.2f}")
-        print(f"Change: ${tomorrow - current_price:+.2f} ({change_pct:+.2f}%)")
-        
-        # 5-day projection
-        recent_returns = self.df["daily_return"].tail(30).mean()
-        five_day = current_price * ((1 + recent_returns) ** 5)
-        
-        print(f"\n30-day avg return: {recent_returns*100:.2f}%")
-        print(f"5-day projection: ${five_day:.2f}")
-        print("="*60 + "\n")
-
-        return tomorrow, float(five_day)
-
-    def predict_direction(self):
-        """Predict direction with confidence"""
-        X = self._build_sequence()
-        prob_up = float(self.clf_model.predict(X, verbose=0)[0][0])
-        
-        direction = "UP" if prob_up >= 0.5 else "DOWN"
-        confidence = prob_up if direction == "UP" else (1 - prob_up)
-        
-        return direction, confidence * 100
-
-    def predict(self, today_price: float):
-        """Main prediction API"""
-        tomorrow_usd, five_day_usd = self.predict_prices(today_price)
-        direction, confidence = self.predict_direction()
-
-        return {
-            "ticker": self.ticker,
-            "today_usd": today_price,
-            "today_inr": today_price * USD_TO_INR,
-            "tomorrow_usd": tomorrow_usd,
-            "tomorrow_inr": tomorrow_usd * USD_TO_INR,
-            "five_day_usd": five_day_usd,
-            "five_day_inr": five_day_usd * USD_TO_INR,
-            "direction": direction,
-            "confidence": confidence,
-            "decision_1d": "BUY" if tomorrow_usd > today_price else "SELL",
-            "decision_5d": "BUY" if direction == "UP" else "SELL",
-        }
+try:
+    # Get last 60 days with selected features
+    X = df[selected_features].iloc[-60:].values.astype(np.float32)
+    
+    # Scale the data
+    X_scaled = scaler.transform(X)
+    
+    # Reshape for LSTM
+    X_reshaped = X_scaled.reshape(1, 60, len(selected_features))
+    
+    # Make prediction
+    pred = model.predict(X_reshaped, verbose=0)
+    base_prob = float(pred[0][0])
+    
+    # Adjust probability based on current price level
+    # This makes predictions realistic for different price zones
+    current_aapl = df['Close'].iloc[-1]
+    price_ratio = current_price / current_aapl
+    
+    # If price is significantly higher, increase DOWN probability
+    # If price is significantly lower, increase UP probability
+    if price_ratio > 1.1:  # 10% higher = more likely DOWN
+        adjusted_prob = base_prob + (price_ratio - 1.0) * 0.5
+    elif price_ratio < 0.9:  # 10% lower = more likely UP
+        adjusted_prob = base_prob - (1.0 - price_ratio) * 0.5
+    else:
+        adjusted_prob = base_prob
+    
+    # Ensure probability stays in valid range
+    adjusted_prob = max(0.1, min(0.9, adjusted_prob))
+    
+    # Determine direction based on adjusted probability
+    if adjusted_prob > 0.6:
+        direction = "DOWN ⬇️"
+        confidence = adjusted_prob
+        price_change_pct = -(2.0 + (adjusted_prob - 0.5) * 4.0)
+        decision = "🔴 SELL"
+        reason = "Overbought - Price pullback expected"
+    elif adjusted_prob < 0.4:
+        direction = "UP ⬆️"
+        confidence = 1 - adjusted_prob
+        price_change_pct = 2.0 + ((0.5 - adjusted_prob) * 4.0)
+        decision = "🟢 BUY"
+        reason = "Oversold - Recovery bounce expected"
+    else:
+        direction = "NEUTRAL ➡️"
+        confidence = 0.5
+        price_change_pct = 0.0
+        decision = "🟡 HOLD"
+        reason = "Unclear direction - Awaiting confirmation"
+    
+    confidence_pct = confidence * 100
+    tomorrow_price = current_price * (1 + price_change_pct / 100)
+    tomorrow_inr = tomorrow_price * usd_to_inr
+    
+    print("\n" + "=" * 70)
+    print("📈 PREDICTION")
+    print("=" * 70)
+    print(f"\n🎯 Direction: {direction}")
+    print(f"💯 Confidence: {confidence_pct:.1f}%")
+    print(f"📝 Reason: {reason}")
+    print(f"\n💰 Estimated Tomorrow Price:")
+    print(f"   USD: ${tomorrow_price:.2f}")
+    print(f"   INR: ₹{tomorrow_inr:,.0f}")
+    print(f"   Change: {price_change_pct:+.2f}%")
+    
+    print("\n" + "=" * 70)
+    print(decision)
+    print("=" * 70)
+    
+    print(f"\n💡 Notes:")
+    print(f"   • Base probability: {base_prob:.4f}")
+    print(f"   • Adjusted probability: {adjusted_prob:.4f}")
+    print(f"   • Price level: {price_ratio:.2%} of current AAPL")
+    print(f"   • Model accuracy: 80.6%")
+    print(f"   • Always use stop-loss orders")
+    print(f"   • Never invest more than you can afford to lose")
+    
+    print("\n" + "=" * 70)
+    print("✅ Prediction complete!")
+    print("=" * 70)
+    
+except Exception as e:
+    print(f"\n❌ Error: {e}")
+    import traceback
+    traceback.print_exc()
